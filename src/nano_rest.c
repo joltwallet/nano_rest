@@ -93,7 +93,7 @@ static esp_err_t event_handler(void *ctx, system_event_t *event)
     return ESP_OK;
 }
 
-char http_request_task(char *web_url, char *web_server, int get_post, char *post_data)
+char http_request_task(char *web_url, char *web_server, int get_post, char *post_data, unsigned char *result_data_buf, size_t result_data_buf_len)
 {
     char request_packet[256];
     if (get_post == 0) {
@@ -215,9 +215,8 @@ char http_request_task(char *web_url, char *web_server, int get_post, char *post
 int network_get_data(unsigned char *user_rpc_command,
         unsigned char *result_data_buf, size_t result_data_buf_len){
   
-    rx_string = http_request_task("/work", "yapraiwallet.space", 1, user_rpc_command);
-    
-    strlcpy((char *)result_data_buf, (char *)rx_string, result_data_buf_len);
+    http_request_task("/api", "yapraiwallet.space", 1, user_rpc_command, result_data_buf, result_data_buf_len);
+
     
     return 0;
 }
