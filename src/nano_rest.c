@@ -17,7 +17,7 @@
 #include "lwip/netdb.h"
 #include "lwip/dns.h"
 
-#include "picohttpparser.h"
+#include "../components/picohttpparser/picohttpparser.h"
 
 #include "esp_log.h"
 
@@ -29,7 +29,6 @@
 #define WEB_URL "/work"
 
 char rx_string[RX_BUFFER_BYTES];
-unsigned char *rpc_command = &buf[RX_BUFFER_BYTES];
 
 static const char *TAG = "network_task";
 
@@ -72,35 +71,14 @@ void sleep_function(int milliseconds) {
     vTaskDelay(milliseconds / portTICK_PERIOD_MS);
 }
 
-static esp_err_t event_handler(void *ctx, system_event_t *event)
-{
-    switch(event->event_id) {
-        case SYSTEM_EVENT_STA_START:
-            esp_wifi_connect();
-            break;
-        case SYSTEM_EVENT_STA_GOT_IP:
-            xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);
-            break;
-        case SYSTEM_EVENT_STA_DISCONNECTED:
-            /* This is a workaround as ESP32 WiFi libs don't currently
-             auto-reassociate. */
-            esp_wifi_connect();
-            xEventGroupClearBits(wifi_event_group, CONNECTED_BIT);
-            break;
-        default:
-            break;
-    }
-    return ESP_OK;
-}
-
-char http_request_task(char *web_url, char *web_server, int get_post, char *post_data, unsigned char *result_data_buf, size_t result_data_buf_len)
+char http_request_task(char *web_url, char *web_server, int get_post, unsigned char *post_data, unsigned char *result_data_buf, size_t result_data_buf_len)
 {
     char request_packet[256];
     if (get_post == 0) {
         snprintf(request_packet, 256, "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: esp-idf/1.0 esp32\r\n\r\n", web_url, web_server);
     }
     else if (get_post == 1) {
-        size_t post_data_length = strlen(post_data);
+        size_t post_data_length = strlen((const char*)post_data);
         
         snprintf(request_packet, 256, "POST %s HTTP/1.0\r\n"
                  "Host: %s\r\n" \
