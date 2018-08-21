@@ -1,0 +1,24 @@
+menu "Nano Currency LWS"
+
+    config NANO_REST_DOMAIN
+        string
+        prompt "Nano Server Domain"
+        default "yapraiwallet.space"
+        help
+            IP/URL for the Nano Server
+
+    config NANO_REST_PATH
+        string
+        prompt "Nano Server Path"
+        default "/api"
+        help
+            Nano Server Path
+
+    config NANO_REST_PORT
+        int
+        prompt "Nano Server Port"
+        default 5000
+        help
+            Nano Server Port
+
+endmenu
