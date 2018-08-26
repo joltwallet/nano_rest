@@ -179,9 +179,14 @@ static char *http_request_task(int get_post, unsigned char *post_data,
     int msg_size = y - ret;
     ESP_LOGI(TAG, "Message Size: %d", msg_size);
 
-    strlcpy((char *)result_data_buf, (char *)&newbuf[ret], result_data_buf_len);
-    if(result_data_buf_len > msg_size) { // todo: this may be off by one
+    if(result_data_buf_len > msg_size) {
+        strncpy((char *)result_data_buf, (char *)&newbuf[ret], msg_size);
         result_data_buf[msg_size] = '\0';
+    }
+    else {
+        strlcpy((char *)result_data_buf, (char *)&newbuf[ret], result_data_buf_len);
+    }
+    if(result_data_buf_len > msg_size) { // todo: this may be off by one
     }
     ESP_LOGI(TAG, "phr_parse_response:\n%s", (char *) result_data_buf);
     close(s);
