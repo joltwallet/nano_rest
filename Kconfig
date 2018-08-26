@@ -1,4 +1,4 @@
-menu "Nano Currency LWS"
+menu "Simple REST Interface"
 
     config NANO_REST_DOMAIN
         string
@@ -17,7 +17,7 @@ menu "Nano Currency LWS"
     config NANO_REST_PORT
         int
         prompt "Nano Server Port"
-        default 5000
+        default 5523
         help
             Nano Server Port
 
