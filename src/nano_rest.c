@@ -64,7 +64,7 @@ static void sleep_function(int milliseconds) {
     vTaskDelay(milliseconds / portTICK_PERIOD_MS);
 }
 
-static char http_request_task(int get_post, unsigned char *post_data,
+static char *http_request_task(int get_post, unsigned char *post_data,
         unsigned char *result_data_buf, size_t result_data_buf_len) {
     int s, r;
     char request_packet[256];
@@ -176,14 +176,16 @@ static char http_request_task(int get_post, unsigned char *post_data,
     num_headers = sizeof(headers) / sizeof(headers[0]);
     ret = phr_parse_response(newbuf, strlen(newbuf), &minor_version, &status, &msg,
                              &msg_len, headers, &num_headers, 0);
-    
     int msg_size = y - ret;
-    char message[msg_size];
-    memcpy(message, &newbuf[ret], ret * sizeof(int));
-    printf("phr_parse_response:\n%s\n", message);
-    
+    ESP_LOGI(TAG, "Message Size: %d", msg_size);
+
+    strlcpy((char *)result_data_buf, (char *)&newbuf[ret], result_data_buf_len);
+    if(result_data_buf_len > msg_size) { // todo: this may be off by one
+        result_data_buf[msg_size] = '\0';
+    }
+    ESP_LOGI(TAG, "phr_parse_response:\n%s", (char *) result_data_buf);
     close(s);
-    return message;
+    return (char *) result_data_buf;
 }
 
 
