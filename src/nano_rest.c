@@ -10,6 +10,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
+#include "esp_log.h"
 
 #include "lwip/err.h"
 #include "lwip/sockets.h"
@@ -17,20 +18,12 @@
 #include "lwip/netdb.h"
 #include "lwip/dns.h"
 
-#include "../components/picohttpparser/picohttpparser.h"
-
-#include "esp_log.h"
-
+#include "picohttpparser.h"
 #include "nano_rest.h"
-
-/* Constants that aren't configurable in menuconfig */
-#define WEB_SERVER "yapraiwallet.space"
-#define WEB_PORT "5000"
-#define WEB_URL "/work"
 
 char rx_string[RX_BUFFER_BYTES];
 
-static const char *TAG = "network_task";
+static const char *TAG = "network_rest";
 
 // Can be set via the setter functions
 static volatile char *remote_domain = NULL;
@@ -39,11 +32,11 @@ static volatile char *remote_path = NULL;
 
 void nano_rest_set_remote_domain(char *str){
     if( NULL != remote_domain ){
-        free((char *)remote_domain);
+        free(remote_domain);
     }
     if( NULL != str ){
         remote_domain = malloc(strlen(str)+1);
-        strcpy((char *)remote_domain, str);
+        strcpy(remote_domain, str);
     }
     else{
         remote_domain = NULL;
@@ -56,30 +49,31 @@ void nano_rest_set_remote_port(uint16_t port){
 
 void nano_rest_set_remote_path(char *str){
     if( NULL != remote_path ){
-        free((char *)remote_path);
+        free(remote_path);
     }
     if( NULL != str ){
         remote_path = malloc(strlen(str)+1);
-        strcpy((char *)remote_path, str);
+        strcpy(remote_path, str);
     }
     else{
         remote_path = NULL;
     }
 }
 
-void sleep_function(int milliseconds) {
+static void sleep_function(int milliseconds) {
     vTaskDelay(milliseconds / portTICK_PERIOD_MS);
 }
 
-char http_request_task(char *web_url, char *web_server, int get_post, unsigned char *post_data, unsigned char *result_data_buf, size_t result_data_buf_len)
-{
+static char http_request_task(int get_post, unsigned char *post_data,
+        unsigned char *result_data_buf, size_t result_data_buf_len) {
+    int s, r;
     char request_packet[256];
     if (get_post == 0) {
-        snprintf(request_packet, 256, "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: esp-idf/1.0 esp32\r\n\r\n", web_url, web_server);
+        snprintf(request_packet, 256, "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: esp-idf/1.0 esp32\r\n\r\n", remote_path, remote_domain);
     }
     else if (get_post == 1) {
         size_t post_data_length = strlen((const char*)post_data);
-        
+        // todo: possibility that this could be truncated
         snprintf(request_packet, 256, "POST %s HTTP/1.0\r\n"
                  "Host: %s\r\n" \
                  "User-Agent: esp-idf/1.0 esp32\r\n"
@@ -87,30 +81,35 @@ char http_request_task(char *web_url, char *web_server, int get_post, unsigned c
                  "Content-Length: %d\r\n"
                  "\r\n"
                  "%s"
-                 , web_url, web_server, post_data_length, post_data);
-        ESP_LOGE(TAG, "%s", request_packet);
+                 , remote_path, remote_domain, post_data_length, post_data);
+        ESP_LOGI(TAG, "POST Request Packet:\n%s", request_packet);
     }
     else {
         ESP_LOGE(TAG, "Error, POST/Get not selected");
         return;
     }
-    
-    const struct addrinfo hints = {
-        .ai_family = AF_INET,
-        .ai_socktype = SOCK_STREAM,
-    };
     struct addrinfo *res;
     struct in_addr *addr;
-    int s, r;
-    char recv_buf[256];
-    
-    ESP_LOGI(TAG, "Connected to AP");
-    
-    int err = getaddrinfo(WEB_SERVER, WEB_PORT, &hints, &res);
-    
-    if(err != 0 || res == NULL) {
-        ESP_LOGE(TAG, "DNS lookup failed err=%d res=%p", err, res);
-        return;
+    {
+        const struct addrinfo hints = {
+            .ai_family = AF_INET,
+            .ai_socktype = SOCK_STREAM,
+        };
+        ESP_LOGI(TAG, "Performing DNS lookup");
+        ESP_LOGI(TAG, "Remote Domain: %s", remote_domain);
+        char port[10];
+        snprintf(port, sizeof(port), "%d", remote_port);
+        ESP_LOGI(TAG, "Remote Port: %s", port);
+        int err = getaddrinfo(remote_domain, port, &hints, &res);
+        ESP_LOGI(TAG, "DNS lookup success");
+        
+        if(err != 0 || res == NULL) {
+            ESP_LOGE(TAG, "DNS lookup failed err=%d res=%p", err, res);
+            return;
+        }
+        else {
+            ESP_LOGI(TAG, "DNS lookup success");
+        }
     }
     
     /* Code to print the resolved IP.
@@ -159,10 +158,9 @@ char http_request_task(char *web_url, char *web_server, int get_post, unsigned c
     int y = 0;
     /* Read HTTP response */
     do {
-        bzero(recv_buf, sizeof(recv_buf));
+        char recv_buf[256] = { 0 };
         r = read(s, recv_buf, sizeof(recv_buf)-1);
         for(int i = 0; i < r; i++) {
-            //putchar(recv_buf[i]);
             newbuf[y] = recv_buf[i];
             y++;
         }
@@ -192,9 +190,6 @@ char http_request_task(char *web_url, char *web_server, int get_post, unsigned c
 
 int network_get_data(unsigned char *user_rpc_command,
         unsigned char *result_data_buf, size_t result_data_buf_len){
-  
-    http_request_task("/api", "yapraiwallet.space", 1, user_rpc_command, result_data_buf, result_data_buf_len);
-
-    
+    http_request_task(1, user_rpc_command, result_data_buf, result_data_buf_len);
     return 0;
 }

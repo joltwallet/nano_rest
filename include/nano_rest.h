@@ -11,7 +11,7 @@ https://www.joltwallet.com/
 
 int network_get_data(unsigned char *user_rpc_command, 
         unsigned char *result_data_buf, size_t result_data_buf_len);
-void network_task(void *pvParameters);
+//void network_task(void *pvParameters);
 
 void nano_rest_set_remote_domain(char *str);
 void nano_rest_set_remote_port(uint16_t port);
