@@ -30,6 +30,21 @@ static volatile char *remote_domain = NULL;
 static volatile uint16_t remote_port = 0;
 static volatile char *remote_path = NULL;
 
+static const char GET_FORMAT_STR[] = \
+        "GET %s HTTP/1.0\r\n"
+        "Host: %s\r\n"
+        "User-Agent: esp-idf/1.0 esp32\r\n"
+        "\r\n";
+
+static const char POST_FORMAT_STR[] = \
+        "POST %s HTTP/1.0\r\n"
+         "Host: %s\r\n" \
+         "User-Agent: esp-idf/1.0 esp32\r\n"
+         "Content-Type: text/plain\r\n"
+         "Content-Length: %d\r\n"
+         "\r\n"
+         "%s";
+
 void nano_rest_set_remote_domain(char *str){
     if( NULL != remote_domain ){
         free(remote_domain);
@@ -64,32 +79,41 @@ static void sleep_function(int milliseconds) {
     vTaskDelay(milliseconds / portTICK_PERIOD_MS);
 }
 
-static char *http_request_task(int get_post, unsigned char *post_data,
-        unsigned char *result_data_buf, size_t result_data_buf_len) {
-    int s, r;
-    char request_packet[256];
-    if (get_post == 0) {
-        snprintf(request_packet, 256, "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: esp-idf/1.0 esp32\r\n\r\n", remote_path, remote_domain);
+static char *http_request_task(int get_post, char *post_data,
+        char *result_data_buf, size_t result_data_buf_len) {
+    int s = -1; // socket descriptor
+    int r;
+    char *request_packet = NULL;
+    struct addrinfo *addrinfo = NULL;
+    char * func_result = NULL;
+    char *http_response = NULL;
+    char *http_response_new = NULL;
+    int http_response_len = 0;
+
+    if( 0 == get_post) {
+        size_t request_packet_len = strlen(GET_FORMAT_STR) + 
+                strlen(remote_path) + strlen(remote_domain) + 1;
+        request_packet = malloc( request_packet_len );
+        snprintf(request_packet, request_packet_len, GET_FORMAT_STR,
+                remote_path, remote_domain);
     }
-    else if (get_post == 1) {
+    else if ( 1 == get_post ) {
+        // 5 is for the uint16 port
+        size_t request_packet_len = strlen(POST_FORMAT_STR) + 
+                strlen(remote_path) + strlen(remote_domain) +
+                strlen(post_data) + 5 + 1;
+        request_packet = malloc( request_packet_len );
+
         size_t post_data_length = strlen((const char*)post_data);
         // todo: possibility that this could be truncated
-        snprintf(request_packet, 256, "POST %s HTTP/1.0\r\n"
-                 "Host: %s\r\n" \
-                 "User-Agent: esp-idf/1.0 esp32\r\n"
-                 "Content-Type: text/plain\r\n"
-                 "Content-Length: %d\r\n"
-                 "\r\n"
-                 "%s"
-                 , remote_path, remote_domain, post_data_length, post_data);
+        snprintf(request_packet, request_packet_len, POST_FORMAT_STR,
+                 remote_path, remote_domain, post_data_length, post_data);
         ESP_LOGI(TAG, "POST Request Packet:\n%s", request_packet);
     }
     else {
         ESP_LOGE(TAG, "Error, POST/Get not selected");
-        return;
+        goto exit;
     }
-    struct addrinfo *res;
-    struct in_addr *addr;
     {
         const struct addrinfo hints = {
             .ai_family = AF_INET,
@@ -100,12 +124,12 @@ static char *http_request_task(int get_post, unsigned char *post_data,
         char port[10];
         snprintf(port, sizeof(port), "%d", remote_port);
         ESP_LOGI(TAG, "Remote Port: %s", port);
-        int err = getaddrinfo(remote_domain, port, &hints, &res);
+        int err = getaddrinfo(remote_domain, port, &hints, &addrinfo);
         ESP_LOGI(TAG, "DNS lookup success");
         
-        if(err != 0 || res == NULL) {
-            ESP_LOGE(TAG, "DNS lookup failed err=%d res=%p", err, res);
-            return;
+        if(err != 0 || addrinfo == NULL) {
+            ESP_LOGE(TAG, "DNS lookup failed err=%d addrinfo=%p", err, addrinfo);
+            goto exit;
         }
         else {
             ESP_LOGI(TAG, "DNS lookup success");
@@ -113,90 +137,107 @@ static char *http_request_task(int get_post, unsigned char *post_data,
     }
     
     /* Code to print the resolved IP.
-     
      Note: inet_ntoa is non-reentrant, look at ipaddr_ntoa_r for "real" code */
-    addr = &((struct sockaddr_in *)res->ai_addr)->sin_addr;
-    ESP_LOGI(TAG, "DNS lookup succeeded. IP=%s", inet_ntoa(*addr));
+    {
+        struct in_addr *addr;
+        addr = &((struct sockaddr_in *)addrinfo->ai_addr)->sin_addr;
+        ESP_LOGI(TAG, "DNS lookup succeeded. IP=%s", inet_ntoa(*addr));
+    }
     
-    s = socket(res->ai_family, res->ai_socktype, 0);
-    if(s < 0) {
+    /* Open Socket Connection */
+    s = socket(addrinfo->ai_family, addrinfo->ai_socktype, 0);
+    if( s < 0 ) {
         ESP_LOGE(TAG, "... Failed to allocate socket.");
-        freeaddrinfo(res);
-        return;
+        goto exit;
     }
     ESP_LOGI(TAG, "... allocated socket");
-    
-    if(connect(s, res->ai_addr, res->ai_addrlen) != 0) {
+    if( 0 != connect(s, addrinfo->ai_addr, addrinfo->ai_addrlen) ) {
         ESP_LOGE(TAG, "... socket connect failed errno=%d", errno);
-        close(s);
-        freeaddrinfo(res);
-        return;
+        goto exit;
     }
-    
     ESP_LOGI(TAG, "... connected");
-    freeaddrinfo(res);
+    freeaddrinfo(addrinfo);
+    addrinfo = NULL;
     
+    /* Write Request to Socket */
     if (write(s, request_packet, strlen(request_packet)) < 0) {
         ESP_LOGE(TAG, "... socket send failed");
-        close(s);
-        return;
+        goto exit;
     }
     ESP_LOGI(TAG, "... socket send success");
     
-    struct timeval receiving_timeout;
-    receiving_timeout.tv_sec = 5;
-    receiving_timeout.tv_usec = 0;
-    if (setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &receiving_timeout,
-                   sizeof(receiving_timeout)) < 0) {
-        ESP_LOGE(TAG, "... failed to set socket receiving timeout");
-        close(s);
-        return;
+    {
+        struct timeval receiving_timeout;
+        receiving_timeout.tv_sec = CONFIG_NANO_REST_RECEIVE_TIMEOUT;
+        receiving_timeout.tv_usec = 0;
+        if (setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &receiving_timeout,
+                       sizeof(receiving_timeout)) < 0) {
+            ESP_LOGE(TAG, "... failed to set socket receiving timeout");
+            goto exit;
+        }
+        ESP_LOGI(TAG, "... set socket receiving timeout success");
     }
-    ESP_LOGI(TAG, "... set socket receiving timeout success");
-    
-    char newbuf[256];
-    int y = 0;
+
     /* Read HTTP response */
     do {
-        char recv_buf[256] = { 0 };
-        r = read(s, recv_buf, sizeof(recv_buf)-1);
-        for(int i = 0; i < r; i++) {
-            newbuf[y] = recv_buf[i];
-            y++;
+        http_response_new = realloc(http_response, http_response_len + CONFIG_NANO_REST_RECEIVE_BLOCK_SIZE);
+        if( NULL == http_response_new ) {
+            ESP_LOGE(TAG, "Unable to allocate additional memory for http_response");
+            goto exit;
         }
-    } while(r > 0);
-    
+        else {
+            http_response = http_response_new;
+        }
+        char recv_buf[CONFIG_NANO_REST_RECEIVE_BLOCK_SIZE] = { 0 };
+        r = read(s, recv_buf, sizeof(recv_buf)-1);
+        memcpy(&http_response[http_response_len], recv_buf, r);
+        http_response_len += r;
+    } while( r == CONFIG_NANO_REST_RECEIVE_BLOCK_SIZE - 1 );
     ESP_LOGI(TAG, "... done reading from socket. Last read return=%d errno=%d\r\n", r, errno);
-    
-    int ret, minor_version, status;
-    struct phr_header headers[100];
-    const char* msg;
-    size_t msg_len, num_headers;
-    
-    num_headers = sizeof(headers) / sizeof(headers[0]);
-    ret = phr_parse_response(newbuf, strlen(newbuf), &minor_version, &status, &msg,
-                             &msg_len, headers, &num_headers, 0);
-    int msg_size = y - ret;
-    ESP_LOGI(TAG, "Message Size: %d", msg_size);
+   
+    {
+        int ret, minor_version, status;
+        struct phr_header headers[100];
+        const char* msg;
+        size_t msg_len, num_headers;
+        
+        num_headers = sizeof(headers) / sizeof(headers[0]);
+        ret = phr_parse_response(http_response, strlen(http_response), 
+                &minor_version, &status, 
+                &msg, &msg_len,
+                headers, &num_headers, 0);
+        int msg_size = http_response_len - ret;
+        ESP_LOGI(TAG, "Message Size: %d", msg_size);
 
-    if(result_data_buf_len > msg_size) {
-        strncpy((char *)result_data_buf, (char *)&newbuf[ret], msg_size);
-        result_data_buf[msg_size] = '\0';
+        if(result_data_buf_len > msg_size) {
+            strncpy((char *)result_data_buf, (char *)&http_response[ret], msg_size);
+            result_data_buf[msg_size] = '\0';
+        }
+        else {
+            ESP_LOGE(TAG, "Insufficient result buffer.");
+            goto exit;
+        }
+        ESP_LOGI(TAG, "phr_parse_response:\n%s", (char *) result_data_buf);
     }
-    else {
-        strlcpy((char *)result_data_buf, (char *)&newbuf[ret], result_data_buf_len);
+    func_result = result_data_buf;
+exit:
+    if( addrinfo ) {
+        freeaddrinfo(addrinfo);
     }
-    if(result_data_buf_len > msg_size) { // todo: this may be off by one
+    if( request_packet ) {
+        free(request_packet);
     }
-    ESP_LOGI(TAG, "phr_parse_response:\n%s", (char *) result_data_buf);
-    close(s);
-    return (char *) result_data_buf;
+    if( s >= 0 ) {
+        close(s);
+    }
+    if( http_response ) {
+        free(http_response);
+    }
+    return func_result;
 }
 
-
-
-int network_get_data(unsigned char *user_rpc_command,
-        unsigned char *result_data_buf, size_t result_data_buf_len){
-    http_request_task(1, user_rpc_command, result_data_buf, result_data_buf_len);
+int network_get_data(char *post_data,
+        char *result_data_buf, size_t result_data_buf_len){
+    http_request_task(1, post_data, result_data_buf, result_data_buf_len);
     return 0;
 }

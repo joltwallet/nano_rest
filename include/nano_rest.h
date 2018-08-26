@@ -9,8 +9,8 @@ https://www.joltwallet.com/
 #define RX_BUFFER_BYTES (1536)
 #define RECEIVE_POLLING_PERIOD_MS pdMS_TO_TICKS(10000)
 
-int network_get_data(unsigned char *user_rpc_command, 
-        unsigned char *result_data_buf, size_t result_data_buf_len);
+int network_get_data(char *post_data, 
+        char *result_data_buf, size_t result_data_buf_len);
 //void network_task(void *pvParameters);
 
 void nano_rest_set_remote_domain(char *str);
