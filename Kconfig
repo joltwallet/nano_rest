@@ -24,14 +24,14 @@ menu "Simple REST Interface"
     config NANO_REST_RECEIVE_TIMEOUT
         int
         prompt "Receive Timeout Duration"
-        default 5
+        default 15
         help
             The amount of seconds to wait for a server response.
 
     config NANO_REST_RECEIVE_BLOCK_SIZE
         int
         prompt "Caching increment size"
-        default 512;
+        default 512
         help
             A larger number may take up more memory than necessary. A smaller
             will require more realloc and unnecessary fragmentation.

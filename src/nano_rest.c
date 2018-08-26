@@ -29,6 +29,7 @@ static const char *TAG = "network_rest";
 static volatile char *remote_domain = NULL;
 static volatile uint16_t remote_port = 0;
 static volatile char *remote_path = NULL;
+static SemaphoreHandle_t http_request_complete = NULL; // Underlying type: (void *)
 
 static const char GET_FORMAT_STR[] = \
         "GET %s HTTP/1.0\r\n"
@@ -44,6 +45,13 @@ static const char POST_FORMAT_STR[] = \
          "Content-Length: %d\r\n"
          "\r\n"
          "%s";
+
+typedef struct task_args_t {
+    int get_post;
+    char *post_data;
+    char *result_data_buf;
+    size_t result_data_buf_len;
+} task_args_t;
 
 void nano_rest_set_remote_domain(char *str){
     if( NULL != remote_domain ){
@@ -236,8 +244,40 @@ exit:
     return func_result;
 }
 
+static void http_request_task_wrapper(void *args_in) {
+    task_args_t *args = args_in;
+    http_request_task(args->get_post, args->post_data,
+            args->result_data_buf, args->result_data_buf_len);
+    xSemaphoreGive(http_request_complete);
+    vTaskDelete(NULL);
+}
+
 int network_get_data(char *post_data,
         char *result_data_buf, size_t result_data_buf_len){
-    http_request_task(1, post_data, result_data_buf, result_data_buf_len);
-    return 0;
+    if( NULL == http_request_complete ) {
+        ESP_LOGI(TAG, "Creating http_request_complete binary semaphore");
+        http_request_complete = xSemaphoreCreateBinary();
+    }
+    task_args_t t = {
+        .get_post = 1,
+        .post_data = post_data,
+        .result_data_buf = result_data_buf,
+        .result_data_buf_len = result_data_buf_len
+    };
+    TaskHandle_t h;
+
+    xTaskCreate(http_request_task_wrapper,
+            "http_rest", 16000, //todo: optimize this number
+            (void *)&t, 10, &h);
+    if( xSemaphoreTake( http_request_complete, 
+            pdMS_TO_TICKS(CONFIG_NANO_REST_RECEIVE_TIMEOUT * 1000)) ) {
+        return 0;
+    }
+    else {
+        // Timed out
+        vTaskDelete(h);
+        result_data_buf[0] = '\0';
+        ESP_LOGE(TAG, "HTTP Task timed out");
+        return -1;
+    }
 }
