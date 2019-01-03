@@ -26,9 +26,9 @@ char rx_string[RX_BUFFER_BYTES];
 static const char *TAG = "network_rest";
 
 // Can be set via the setter functions
-static volatile char *remote_domain = NULL;
-static volatile uint16_t remote_port = 0;
-static volatile char *remote_path = NULL;
+static char *remote_domain = NULL;
+static uint16_t remote_port = 0;
+static char *remote_path = NULL;
 static SemaphoreHandle_t http_request_complete = NULL; // Underlying type: (void *)
 
 static const char GET_FORMAT_STR[] = \
@@ -81,10 +81,6 @@ void nano_rest_set_remote_path(char *str){
     else{
         remote_path = NULL;
     }
-}
-
-static void sleep_function(int milliseconds) {
-    vTaskDelay(milliseconds / portTICK_PERIOD_MS);
 }
 
 static char *http_request_task(int get_post, char *post_data,
